@@ -57,6 +57,19 @@ def init_db(db_path='task_priority.db'):
         )
     ''')
 
+    # Create Batches Table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS Batches (
+            batch_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            filename TEXT NOT NULL,
+            task_count INTEGER NOT NULL,
+            result_filepath TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES Users (user_id)
+        )
+    ''')
+
     # Create Override History Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS OverrideHistory (

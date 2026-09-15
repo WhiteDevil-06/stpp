@@ -3,3 +3,11 @@ __pycache__/
 *.pyc
 .env
 uploads/*.csv
+venv/
+.pytest_cache/
+.agents/
+
+# Internal project files
+ROADMAP.md
+Smart_Task_Priority_Predictor SRS.md
+smart_task_priority_predictor/

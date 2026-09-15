@@ -212,8 +212,12 @@ def tasks_list():
         ORDER BY t.deadline ASC
     """, (user_id,))
     tasks = cursor.fetchall()
+    
+    cursor.execute("SELECT * FROM Batches WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
+    batches = cursor.fetchall()
+    
     conn.close()
-    return render_template('tasks_list.html', tasks=tasks)
+    return render_template('tasks_list.html', tasks=tasks, batches=batches)
 
 def calculate_priority_score(deadline_date, effort, impact, urgency, dependencies):
     days_to_deadline = (deadline_date - date.today()).days
@@ -692,6 +696,15 @@ def predict_batch():
     filename = f"batch_results_{session['user_id']}_{int(datetime.now().timestamp())}.csv"
     result_filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     result_df.to_csv(result_filepath, index=False)
+    
+    conn = get_db_connection(app.config['DATABASE_PATH'])
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO Batches (user_id, filename, task_count, result_filepath)
+        VALUES (?, ?, ?, ?)
+    """, (session['user_id'], secure_filename(file.filename), len(valid_rows), filename))
+    conn.commit()
+    conn.close()
 
     return render_template(
         'batch_results.html',
@@ -702,6 +715,26 @@ def predict_batch():
         priority_counts=priority_counts,
         result_filename=filename
     )
+
+@app.route('/api/batches/<int:batch_id>')
+@login_required
+def get_batch_results(batch_id):
+    conn = get_db_connection(app.config['DATABASE_PATH'])
+    cursor = conn.cursor()
+    cursor.execute("SELECT result_filepath FROM Batches WHERE batch_id = ? AND user_id = ?", (batch_id, session['user_id']))
+    batch = cursor.fetchone()
+    conn.close()
+    
+    if not batch:
+        return jsonify({'status': 'error', 'message': 'Batch not found'}), 404
+        
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], batch['result_filepath'])
+    if not os.path.exists(filepath):
+        return jsonify({'status': 'error', 'message': 'Results file missing'}), 404
+        
+    df = pd.read_csv(filepath)
+    # Ensure it's a list of dicts
+    return jsonify({'status': 'success', 'data': df.to_dict(orient='records')})
 
 @app.route('/download/<filename>')
 @login_required
