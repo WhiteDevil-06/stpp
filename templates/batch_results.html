@@ -1,0 +1,146 @@
+{% extends 'base.html' %}
+{% set active_page = 'batch_prediction' %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
+    <div>
+        <h2 class="text-white fw-bold mb-1">Batch Processing Results</h2>
+        <p class="text-muted mb-0">Processed <strong>{{ valid_count }}</strong> valid task records out of <strong>{{ total_count }}</strong> total rows.</p>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+        <a href="{{ url_for('predict_batch') }}" class="btn btn-secondary btn-sm px-3 d-flex align-items-center gap-2">
+            <i data-lucide="arrow-left" style="width: 16px; height: 16px;"></i> Upload Another CSV
+        </a>
+        {% if result_filename %}
+        <a href="{{ url_for('download_file', filename=result_filename) }}" class="btn btn-primary btn-sm px-4 d-flex align-items-center gap-2">
+            <i data-lucide="download" style="width: 16px; height: 16px;"></i> Download Results CSV
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Metrics Row -->
+<div class="row g-4 mb-5">
+    <div class="col-md-3">
+        <div class="metric-card h-100">
+            <div class="metric-label">
+                <i data-lucide="check-circle" class="text-sage" style="width: 16px; height: 16px;"></i> Valid Processed
+            </div>
+            <div class="metric-value">{{ valid_count }}</div>
+            <div class="text-muted mt-auto" style="font-size: 0.8rem;">Ready for review</div>
+        </div>
+    </div>
+    <div class="col-md-9">
+        <div class="row g-4 h-100">
+            <div class="col-sm-3">
+                <div class="metric-card metric-critical h-100">
+                    <div class="metric-label">Critical</div>
+                    <div class="metric-value">{{ priority_counts.get('Critical', 0) }}</div>
+                </div>
+            </div>
+            <div class="col-sm-3">
+                <div class="metric-card metric-high h-100">
+                    <div class="metric-label">High</div>
+                    <div class="metric-value">{{ priority_counts.get('High', 0) }}</div>
+                </div>
+            </div>
+            <div class="col-sm-3">
+                <div class="metric-card metric-medium h-100">
+                    <div class="metric-label">Medium</div>
+                    <div class="metric-value">{{ priority_counts.get('Medium', 0) }}</div>
+                </div>
+            </div>
+            <div class="col-sm-3">
+                <div class="metric-card metric-low h-100">
+                    <div class="metric-label">Low</div>
+                    <div class="metric-value">{{ priority_counts.get('Low', 0) }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if invalid_rows %}
+<!-- Invalid Rows / Errors Section -->
+<div class="stpp-card p-4 mb-5" style="border-color: rgba(191, 97, 106, 0.4);">
+    <h5 class="text-danger mb-3 d-flex align-items-center gap-2">
+        <i data-lucide="alert-triangle" style="width: 20px; height: 20px;"></i>
+        Invalid Rows Identified ({{ invalid_rows|length }})
+    </h5>
+    <p class="text-muted small mb-3">The following rows contain formatting errors or missing fields and were excluded from prediction:</p>
+    <div class="table-responsive">
+        <table class="table table-dark table-hover mb-0 align-middle" style="font-size: 0.85rem;">
+            <thead>
+                <tr>
+                    <th>Row #</th>
+                    <th>Task Title / Info</th>
+                    <th>Issue Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for err in invalid_rows %}
+                <tr>
+                    <td class="fw-bold text-muted">Row {{ err.row_num }}</td>
+                    <td>{{ err.title or 'N/A' }}</td>
+                    <td class="text-danger">{{ err.reason }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Processed Predictions Table -->
+<div class="stpp-card p-0 overflow-hidden mb-4">
+    <div class="p-4 border-bottom border-custom d-flex justify-content-between align-items-center">
+        <h5 class="text-white m-0 d-flex align-items-center gap-2">
+            <i data-lucide="layers" class="text-sage" style="width: 20px; height: 20px;"></i>
+            Predicted Batch Tasks
+        </h5>
+        <span class="text-muted small">Showing preview of processed rows</span>
+    </div>
+    {% if results %}
+    <div class="table-responsive">
+        <table class="table table-dark table-hover mb-0 align-middle" style="font-size: 0.9rem;">
+            <thead>
+                <tr>
+                    <th class="ps-4">Title</th>
+                    <th>Deadline</th>
+                    <th>Urgency</th>
+                    <th>Impact</th>
+                    <th>Effort (h)</th>
+                    <th>Priority Score</th>
+                    <th>Priority Label</th>
+                    <th class="pe-4">ML Decision Tree</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for task in results %}
+                <tr>
+                    <td class="ps-4 fw-medium text-white">{{ task.title }}</td>
+                    <td class="text-muted">{{ task.deadline }}</td>
+                    <td><span class="badge bg-secondary">{{ task.urgency }}/10</span></td>
+                    <td><span class="badge bg-secondary">{{ task.business_impact }}/10</span></td>
+                    <td>{{ task.estimated_effort }}</td>
+                    <td class="fw-bold text-white">{{ task.priority_score }}</td>
+                    <td>
+                        <span class="badge-priority badge-{{ task.priority_label|lower }}">
+                            {{ task.priority_label }}
+                        </span>
+                    </td>
+                    <td class="pe-4">
+                        <span class="badge bg-dark border border-secondary text-sage px-3 py-1">
+                            {{ task.model_prediction }}
+                        </span>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="p-5 text-center text-muted">No valid rows were processed from this CSV file.</div>
+    {% endif %}
+</div>
+{% endblock %}

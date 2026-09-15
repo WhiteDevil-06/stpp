@@ -1,0 +1,116 @@
+{% extends 'base.html' %}
+{% set active_page = 'batch_prediction' %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-10 col-xl-9">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h2 class="text-white fw-bold mb-1">CSV Batch Prediction</h2>
+                <p class="text-muted mb-0">Upload a CSV file containing multiple tasks for batch priority assessment (up to 500 tasks).</p>
+            </div>
+            <a href="{{ url_for('download_sample_csv') }}" class="btn btn-outline-light btn-sm d-flex align-items-center gap-2">
+                <i data-lucide="download" style="width: 16px; height: 16px;"></i> Sample CSV Template
+            </a>
+        </div>
+
+        <!-- Uploader Card -->
+        <div class="stpp-card p-4 p-md-5 mb-4">
+            <form method="POST" action="{{ url_for('predict_batch') }}" enctype="multipart/form-data" id="batchUploadForm">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
+                
+                <div class="upload-dropzone p-5 text-center rounded-3 mb-4" id="dropzone" style="border: 2px dashed var(--border); background: rgba(255, 255, 255, 0.02); cursor: pointer; transition: all 0.2s ease;">
+                    <div class="mb-3">
+                        <div class="d-inline-flex p-3 rounded-circle" style="background: rgba(163, 190, 140, 0.1); color: var(--accent-sage);">
+                            <i data-lucide="upload-cloud" style="width: 40px; height: 40px;"></i>
+                        </div>
+                    </div>
+                    <h5 class="text-white fw-semibold mb-2">Drag and drop your CSV file here</h5>
+                    <p class="text-muted small mb-3">or click to browse from your computer (.csv files only)</p>
+                    <input type="file" name="file" id="fileInput" accept=".csv" class="d-none" required>
+                    <button type="button" class="btn btn-secondary btn-sm px-4" onclick="document.getElementById('fileInput').click()">Select File</button>
+                    <div id="selectedFileName" class="text-sage fw-medium mt-3 d-none"></div>
+                </div>
+
+                <div class="d-flex justify-content-end">
+                    <button type="submit" class="btn btn-primary px-5 d-flex align-items-center gap-2" id="submitBtn">
+                        <i data-lucide="play" style="width: 18px; height: 18px;"></i> Process Batch Prediction
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- CSV Specification Guidelines -->
+        <div class="stpp-card p-4">
+            <h5 class="text-white mb-3 d-flex align-items-center gap-2">
+                <i data-lucide="info" class="text-softblue" style="width: 20px; height: 20px;"></i> CSV File Guidelines & Specifications
+            </h5>
+            <div class="row g-4 text-muted small">
+                <div class="col-md-6">
+                    <h6 class="text-white mb-2">Required Columns</h6>
+                    <ul class="ps-3 mb-0">
+                        <li><code>title</code> - Task title/name</li>
+                        <li><code>deadline</code> (or <code>deadline_date</code>) - Format <code>YYYY-MM-DD</code></li>
+                        <li><code>urgency</code> - Numeric scale <code>1</code> to <code>10</code></li>
+                        <li><code>business_impact</code> - Numeric scale <code>1</code> to <code>10</code></li>
+                        <li><code>estimated_effort</code> - Estimated hours (numeric &gt; 0)</li>
+                        <li><code>dependency_count</code> - Number of dependencies (&gt;= 0)</li>
+                        <li><code>task_type</code> (optional) - e.g., <code>Development</code>, <code>Bug</code>, <code>Feature</code>, <code>General</code></li>
+                    </ul>
+                </div>
+                <div class="col-md-6">
+                    <h6 class="text-white mb-2">Processing Rules & Limits</h6>
+                    <ul class="ps-3 mb-0">
+                        <li>Maximum limit: <strong>500 tasks per upload</strong>.</li>
+                        <li>Invalid rows (missing fields, past dates, out-of-range values) will be detailed in the error summary.</li>
+                        <li>Valid tasks will be processed using the Decision Tree model and rule engine.</li>
+                        <li>Results can be previewed online and downloaded as a formatted CSV file.</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('fileInput');
+    const selectedFileName = document.getElementById('selectedFileName');
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropzone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            dropzone.style.borderColor = 'var(--accent-sage)';
+            dropzone.style.background = 'rgba(163, 190, 140, 0.05)';
+        }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropzone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            dropzone.style.borderColor = 'var(--border)';
+            dropzone.style.background = 'rgba(255, 255, 255, 0.02)';
+        }, false);
+    });
+
+    dropzone.addEventListener('drop', (e) => {
+        const dt = e.dataTransfer;
+        const files = dt.files;
+        if (files.length > 0) {
+            fileInput.files = files;
+            updateFileName();
+        }
+    });
+
+    fileInput.addEventListener('change', updateFileName);
+
+    function updateFileName() {
+        if (fileInput.files.length > 0) {
+            selectedFileName.textContent = 'Selected File: ' + fileInput.files[0].name;
+            selectedFileName.classList.remove('d-none');
+        }
+    }
+</script>
+{% endblock %}

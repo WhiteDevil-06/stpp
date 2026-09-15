@@ -1,14 +1,19 @@
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash, send_from_directory, Response
 import os
+import pandas as pd
+from werkzeug.utils import secure_filename
 from forms import TaskForm, OverrideForm, EditProfileForm, ChangePasswordForm
 from database import get_db_connection
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, date
+from prediction import predict_priority, predict_priority_batch
 app = Flask(__name__)
 # Secret key should be loaded from env in production, but for this internship project a simple string is fine
 app.config['SECRET_KEY'] = 'dev-internship-secret-key'
 app.config['DATABASE_PATH'] = 'task_priority.db'
+app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 def login_required(f):
     @wraps(f)
@@ -277,10 +282,24 @@ def create_task():
             form.dependencies.data
         )
         
+        days_to_deadline = (deadline_date - date.today()).days
+        try:
+            ml_pred = predict_priority(
+                days_to_deadline=days_to_deadline,
+                estimated_effort=form.estimated_effort.data,
+                business_impact=form.business_impact.data,
+                urgency=form.urgency.data,
+                dependency_count=form.dependencies.data,
+                task_type='General'
+            )
+            ml_prediction = str(ml_pred)
+        except Exception:
+            ml_prediction = label
+
         cursor.execute("""
             INSERT INTO Predictions (task_id, priority_score, priority_label, model_prediction)
             VALUES (?, ?, ?, ?)
-        """, (task_id, score, label, label))
+        """, (task_id, score, label, ml_prediction))
         
         conn.commit()
         conn.close()
@@ -368,10 +387,24 @@ def edit_task(id):
             form.dependencies.data
         )
         
+        days_to_deadline = (deadline_date - date.today()).days
+        try:
+            ml_pred = predict_priority(
+                days_to_deadline=days_to_deadline,
+                estimated_effort=form.estimated_effort.data,
+                business_impact=form.business_impact.data,
+                urgency=form.urgency.data,
+                dependency_count=form.dependencies.data,
+                task_type='General'
+            )
+            ml_prediction = str(ml_pred)
+        except Exception:
+            ml_prediction = label
+
         cursor.execute("""
             UPDATE Predictions SET priority_score=?, priority_label=?, model_prediction=?
             WHERE task_id=?
-        """, (score, label, label, id))
+        """, (score, label, ml_prediction, id))
         
         conn.commit()
         conn.close()
@@ -434,20 +467,251 @@ def override_priority(id):
 @app.route('/predict', methods=['POST'])
 @login_required
 def predict():
-    # TODO: Single task prediction
-    return "Prediction Stub"
+    data = request.get_json(silent=True) or request.form
+    try:
+        if 'deadline' in data:
+            d_val = data['deadline']
+            if isinstance(d_val, str):
+                deadline_date = datetime.strptime(d_val, '%Y-%m-%d').date()
+            else:
+                deadline_date = d_val
+            days_to_deadline = (deadline_date - date.today()).days
+        else:
+            days_to_deadline = int(data.get('days_to_deadline', 7))
 
-@app.route('/predict/batch', methods=['POST'])
+        estimated_effort = float(data.get('estimated_effort', 1.0))
+        business_impact = int(data.get('business_impact', 5))
+        urgency = int(data.get('urgency', 5))
+        dependency_count = int(data.get('dependency_count', 0))
+        task_type = data.get('task_type', 'General')
+
+        prediction = predict_priority(
+            days_to_deadline,
+            estimated_effort,
+            business_impact,
+            urgency,
+            dependency_count,
+            task_type
+        )
+        return jsonify({
+            "status": "success",
+            "prediction": str(prediction),
+            "inputs": {
+                "days_to_deadline": days_to_deadline,
+                "estimated_effort": estimated_effort,
+                "business_impact": business_impact,
+                "urgency": urgency,
+                "dependency_count": dependency_count,
+                "task_type": task_type
+            }
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+
+@app.route('/predict/sample-csv', methods=['GET'])
+@login_required
+def download_sample_csv():
+    sample_data = (
+        "title,deadline,urgency,business_impact,estimated_effort,dependency_count,task_type\n"
+        "Fix Login Security Bug,2026-09-20,9,9,4.0,1,Bug\n"
+        "Design Landing Page Header,2026-09-25,5,6,3.0,0,Design\n"
+        "Refactor Database Schema,2026-09-18,8,8,12.0,2,Development\n"
+        "Write API Documentation,2026-09-30,3,4,2.0,0,Documentation\n"
+    )
+    return Response(
+        sample_data,
+        mimetype="text/csv",
+        headers={"Content-disposition": "attachment; filename=stpp_sample_tasks.csv"}
+    )
+
+@app.route('/predict/batch', methods=['GET', 'POST'])
 @login_required
 def predict_batch():
-    # TODO: CSV batch prediction
-    return "Batch Prediction Stub"
+    if request.method == 'GET':
+        return render_template('batch_upload.html')
+
+    if 'file' not in request.files:
+        flash('No file selected.', 'error')
+        return redirect(url_for('predict_batch'))
+
+    file = request.files['file']
+    if not file or file.filename == '':
+        flash('No file selected.', 'error')
+        return redirect(url_for('predict_batch'))
+
+    if not file.filename.lower().endswith('.csv'):
+        flash('Invalid file format. Please upload a .csv file.', 'error')
+        return redirect(url_for('predict_batch'))
+
+    try:
+        df = pd.read_csv(file)
+    except Exception as e:
+        flash(f'Failed to read CSV file: {str(e)}', 'error')
+        return redirect(url_for('predict_batch'))
+
+    if len(df) == 0:
+        flash('The uploaded CSV file is empty.', 'error')
+        return redirect(url_for('predict_batch'))
+
+    if len(df) > 500:
+        flash('CSV exceeds maximum limit of 500 tasks per upload.', 'error')
+        return redirect(url_for('predict_batch'))
+
+    # Standardize column names
+    df.columns = [c.strip().lower() for c in df.columns]
+
+    col_map = {
+        'deadline_date': 'deadline',
+        'task_name': 'title',
+        'task': 'title',
+        'effort': 'estimated_effort',
+        'impact': 'business_impact',
+        'dependencies': 'dependency_count'
+    }
+    df = df.rename(columns=col_map)
+
+    required_fields = ['title', 'deadline', 'urgency', 'business_impact', 'estimated_effort', 'dependency_count']
+    missing_fields = [f for f in required_fields if f not in df.columns]
+    if missing_fields:
+        flash(f'Missing required CSV columns: {", ".join(missing_fields)}', 'error')
+        return redirect(url_for('predict_batch'))
+
+    if 'task_type' not in df.columns:
+        df['task_type'] = 'General'
+
+    valid_rows = []
+    invalid_rows = []
+    today = date.today()
+
+    for idx, row in df.iterrows():
+        row_num = idx + 2
+        title = str(row.get('title', f'Task {idx+1}')).strip()
+
+        deadline_str = str(row.get('deadline', '')).strip()
+        try:
+            deadline_date = datetime.strptime(deadline_str, '%Y-%m-%d').date()
+        except Exception:
+            invalid_rows.append({
+                "row_num": row_num,
+                "title": title,
+                "reason": f"Invalid date format '{deadline_str}' (Expected YYYY-MM-DD)"
+            })
+            continue
+
+        try:
+            urgency = int(row.get('urgency'))
+            if not (1 <= urgency <= 10):
+                raise ValueError()
+        except Exception:
+            invalid_rows.append({
+                "row_num": row_num,
+                "title": title,
+                "reason": "Urgency must be an integer between 1 and 10"
+            })
+            continue
+
+        try:
+            business_impact = int(row.get('business_impact'))
+            if not (1 <= business_impact <= 10):
+                raise ValueError()
+        except Exception:
+            invalid_rows.append({
+                "row_num": row_num,
+                "title": title,
+                "reason": "Business Impact must be an integer between 1 and 10"
+            })
+            continue
+
+        try:
+            estimated_effort = float(row.get('estimated_effort'))
+            if estimated_effort <= 0:
+                raise ValueError()
+        except Exception:
+            invalid_rows.append({
+                "row_num": row_num,
+                "title": title,
+                "reason": "Estimated effort must be a positive number"
+            })
+            continue
+
+        try:
+            dependency_count = int(row.get('dependency_count'))
+            if dependency_count < 0:
+                raise ValueError()
+        except Exception:
+            invalid_rows.append({
+                "row_num": row_num,
+                "title": title,
+                "reason": "Dependency count must be a non-negative integer"
+            })
+            continue
+
+        task_type = str(row.get('task_type', 'General')).strip() or 'General'
+        days_to_deadline = (deadline_date - today).days
+
+        score, label = calculate_priority_score(
+            deadline_date, estimated_effort, business_impact, urgency, dependency_count
+        )
+
+        valid_rows.append({
+            "title": title,
+            "deadline": deadline_str,
+            "days_to_deadline": days_to_deadline,
+            "estimated_effort": estimated_effort,
+            "business_impact": business_impact,
+            "urgency": urgency,
+            "dependency_count": dependency_count,
+            "task_type": task_type,
+            "priority_score": score,
+            "priority_label": label
+        })
+
+    if not valid_rows:
+        return render_template(
+            'batch_results.html',
+            results=[],
+            invalid_rows=invalid_rows,
+            valid_count=0,
+            total_count=len(df),
+            priority_counts={},
+            result_filename=None
+        )
+
+    valid_df = pd.DataFrame(valid_rows)
+    ml_predictions = predict_priority_batch(valid_df)
+
+    for i, pred in enumerate(ml_predictions):
+        valid_rows[i]["model_prediction"] = str(pred)
+
+    priority_counts = {}
+    for r in valid_rows:
+        lbl = r["priority_label"]
+        priority_counts[lbl] = priority_counts.get(lbl, 0) + 1
+
+    result_df = pd.DataFrame(valid_rows)
+    filename = f"batch_results_{session['user_id']}_{int(datetime.now().timestamp())}.csv"
+    result_filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    result_df.to_csv(result_filepath, index=False)
+
+    return render_template(
+        'batch_results.html',
+        results=valid_rows,
+        invalid_rows=invalid_rows,
+        valid_count=len(valid_rows),
+        total_count=len(df),
+        priority_counts=priority_counts,
+        result_filename=filename
+    )
 
 @app.route('/download/<filename>')
 @login_required
 def download_file(filename):
-    # TODO: Download batch results
-    return f"Download {filename} Stub"
+    safe_name = secure_filename(filename)
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], safe_name)
+    if not os.path.exists(filepath):
+        flash('Requested file not found or permission denied.', 'error')
+        return redirect(url_for('predict_batch'))
+    return send_from_directory(app.config['UPLOAD_FOLDER'], safe_name, as_attachment=True)
 
 @app.route('/profile/delete', methods=['POST'])
 @login_required

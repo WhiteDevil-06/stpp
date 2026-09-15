@@ -85,6 +85,9 @@
                 <a href="{{ url_for('tasks_list') }}" class="nav-item {{ 'active' if active_page == 'tasks' else '' }}" title="My Tasks">
                     <i data-lucide="check-square"></i> <span>My Tasks</span>
                 </a>
+                <a href="{{ url_for('predict_batch') }}" class="nav-item {{ 'active' if active_page == 'batch_prediction' else '' }}" title="Batch Prediction">
+                    <i data-lucide="file-text"></i> <span>Batch Prediction</span>
+                </a>
                 
                 <div class="mt-4 mb-2 ms-3 text-muted nav-section-title" style="font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;">Account</div>
                 
